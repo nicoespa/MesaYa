@@ -7,7 +7,7 @@ const registerSchema = z.object({
     name: z.string().min(1, 'El nombre del restaurante es requerido'),
     address: z.string().min(1, 'La dirección es requerida'),
     phone: z.string().min(1, 'El teléfono es requerido'),
-    email: z.string().email('Email inválido'),
+    email: z.string().email('Email inválido').optional(),
     description: z.string().optional(),
   }),
   owner: z.object({
@@ -24,18 +24,20 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServerClient()
 
-    // Check if restaurant email already exists
-    const { data: existingRestaurant } = await supabase
-      .from('restaurants')
-      .select('id')
-      .eq('email', restaurant.email)
-      .single()
+    // Check if restaurant email already exists (only if provided)
+    if (restaurant.email) {
+      const { data: existingRestaurant } = await supabase
+        .from('restaurants')
+        .select('id')
+        .eq('email', restaurant.email)
+        .single()
 
-    if (existingRestaurant) {
-      return NextResponse.json(
-        { error: 'Ya existe un restaurante con este email' },
-        { status: 400 }
-      )
+      if (existingRestaurant) {
+        return NextResponse.json(
+          { error: 'Ya existe un restaurante con este email' },
+          { status: 400 }
+        )
+      }
     }
 
     // Check if owner email already exists
@@ -93,7 +95,6 @@ export async function POST(request: NextRequest) {
         name: restaurant.name,
         address: restaurant.address,
         phone: restaurant.phone,
-        email: restaurant.email,
         slug: slug,
         owner_id: authData.user.id,
         status: 'active'
