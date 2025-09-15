@@ -137,10 +137,7 @@ export async function POST(request: NextRequest) {
       .from('waitlists')
       .insert({
         restaurant_id: restaurantData.id,
-        name: 'Lista Principal',
-        status: 'open',
-        max_capacity: 50,
-        estimated_wait_time: 30
+        status: 'open'
       })
 
     if (waitlistError) {
