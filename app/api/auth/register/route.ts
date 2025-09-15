@@ -94,7 +94,6 @@ export async function POST(request: NextRequest) {
         address: restaurant.address,
         phone: restaurant.phone,
         email: restaurant.email,
-        description: restaurant.description || '',
         slug: slug,
         owner_id: authData.user.id,
         status: 'active'
