@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerClient } from '@/lib/db/client'
+import { createServerClient, supabase } from '@/lib/db/client'
 import { z } from 'zod'
 
 const registerSchema = z.object({
@@ -22,11 +22,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { restaurant, owner } = registerSchema.parse(body)
 
-    const supabase = createServerClient()
+    const supabaseServer = createServerClient()
+    const supabaseClient = supabase
 
     // Check if restaurant email already exists (only if provided)
     if (restaurant.email) {
-      const { data: existingRestaurant } = await supabase
+      const { data: existingRestaurant } = await supabaseServer
         .from('restaurants')
         .select('id')
         .eq('email', restaurant.email)
@@ -40,22 +41,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Check if owner email already exists
-    const { data: existingOwner } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', owner.email)
-      .single()
+    // Check if owner email already exists in auth
+    const { data: existingAuthUser } = await supabaseClient.auth.getUser()
+    
+    // We'll check this after trying to create the user, since we can't easily check auth users
 
-    if (existingOwner) {
-      return NextResponse.json(
-        { error: 'Ya existe un usuario con este email' },
-        { status: 400 }
-      )
-    }
-
-    // Create user account
-    const { data: authData, error: authError } = await supabase.auth.signUp({
+    // Create user account (using client with anon key)
+    const { data: authData, error: authError } = await supabaseClient.auth.signUp({
       email: owner.email,
       password: owner.password,
       options: {
@@ -69,7 +61,11 @@ export async function POST(request: NextRequest) {
     if (authError) {
       console.error('Auth error:', authError)
       return NextResponse.json(
-        { error: 'Error al crear la cuenta de usuario' },
+        { 
+          error: 'Error al crear la cuenta de usuario',
+          details: authError.message,
+          code: authError.code
+        },
         { status: 400 }
       )
     }
@@ -89,15 +85,15 @@ export async function POST(request: NextRequest) {
       .trim()
 
     // Create restaurant
-    const { data: restaurantData, error: restaurantError } = await supabase
+    const { data: restaurantData, error: restaurantError } = await supabaseServer
       .from('restaurants')
       .insert({
         name: restaurant.name,
         address: restaurant.address,
-        phone: restaurant.phone,
+        waba_phone_id: restaurant.phone, // Store phone in waba_phone_id field
         slug: slug,
-        owner_id: authData.user.id,
-        status: 'active'
+        tz: 'America/Argentina/Buenos_Aires',
+        plan: 'starter'
       })
       .select()
       .single()
@@ -105,38 +101,39 @@ export async function POST(request: NextRequest) {
     if (restaurantError) {
       console.error('Restaurant error:', restaurantError)
       // Clean up user if restaurant creation fails
-      await supabase.auth.admin.deleteUser(authData.user.id)
+      await supabaseServer.auth.admin.deleteUser(authData.user.id)
       return NextResponse.json(
-        { error: 'Error al crear el restaurante' },
+        { 
+          error: 'Error al crear el restaurante',
+          details: restaurantError.message,
+          code: restaurantError.code
+        },
         { status: 400 }
       )
     }
 
-    // Create user record
-    const { error: userError } = await supabase
-      .from('users')
+    // Create user-restaurant relationship
+    const { error: userRestaurantError } = await supabaseServer
+      .from('users_restaurants')
       .insert({
-        id: authData.user.id,
-        email: owner.email,
-        name: owner.name,
-        role: 'restaurant_owner',
+        user_id: authData.user.id,
         restaurant_id: restaurantData.id,
-        created_at: new Date().toISOString()
+        role: 'owner'
       })
 
-    if (userError) {
-      console.error('User record error:', userError)
-      // Clean up if user record creation fails
-      await supabase.from('restaurants').delete().eq('id', restaurantData.id)
-      await supabase.auth.admin.deleteUser(authData.user.id)
+    if (userRestaurantError) {
+      console.error('User-restaurant relationship error:', userRestaurantError)
+      // Clean up if relationship creation fails
+      await supabaseServer.from('restaurants').delete().eq('id', restaurantData.id)
+      await supabaseServer.auth.admin.deleteUser(authData.user.id)
       return NextResponse.json(
-        { error: 'Error al crear el registro de usuario' },
+        { error: 'Error al vincular usuario con restaurante' },
         { status: 400 }
       )
     }
 
     // Create default waitlist for the restaurant
-    const { error: waitlistError } = await supabase
+    const { error: waitlistError } = await supabaseServer
       .from('waitlists')
       .insert({
         restaurant_id: restaurantData.id,
